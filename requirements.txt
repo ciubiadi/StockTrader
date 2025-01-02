@@ -1,0 +1,8 @@
+cs50
+Flask
+Flask-Session
+pytz
+requests
+
+create purchases table:
+CREATE TABLE purchases (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, userid INTEGER NOT NULL, symbol TEXT NOT NULL, shares INTEGER NOT NULL, final_price TEXT NOT NULL);
