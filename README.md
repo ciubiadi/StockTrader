@@ -86,9 +86,6 @@ Install all dependencies using pip install -r requirements.txt.
 ### Contributing
 Contributions are welcome! Please submit a pull request or create an issue to discuss potential changes or features.
 
-### License
-This project is licensed under the MIT License. See the LICENSE file for details.
-
 ### Acknowledgments
 * CS50x: This project is inspired by the CS50 Finance assignment.
 * Harvard University: Thanks for providing the foundation for this project.
