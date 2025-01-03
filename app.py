@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 from cs50 import SQL
 from flask import Flask, flash, redirect, render_template, request, session
@@ -25,9 +26,11 @@ db = SQL("sqlite:///finance.db")
 @app.after_request
 def after_request(response):
     """Ensure responses aren't cached"""
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Expires"] = 0
-    response.headers["Pragma"] = "no-cache"
+    response.headers.update({
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Expires": 0,
+        "Pragma": "no-cache"
+    })
     return response
 
 
@@ -38,46 +41,23 @@ def index():
     user = db.execute("SELECT * FROM users WHERE id = ?", session["user_id"])
     userCash = user[0]["cash"]
 
-    userTransactions = db.execute("SELECT * FROM purchases WHERE userid = ?", session["user_id"])
-    totalTransactions = 0
-    print(f"\n user: {user} \n")
-    print(f"\n userTransactions: {userTransactions } \n")
+    # Retrieve all transactions of the current user
+    userStocks = db.execute(
+        "SELECT symbol, name, price, SUM(shares) as totalShares FROM purchases WHERE userid = ? GROUP BY symbol", session["user_id"])
 
-    grouped = {}
+    total = userCash
+    stocks = []
 
-    for transaction in userTransactions:
-        symbol = transaction['symbol']
-        shares = transaction['shares']
-        price = float(transaction['price'])
-        totalTransactions += price * shares
+    for stock in userStocks:
+        if stock["totalShares"] > 0:
+            stocks.append(stock)
+        total += stock["price"] * stock["totalShares"]
 
-        # Check if the symbol is already in the grouped dictionary
-        if symbol not in grouped:
-            # Initialize the entry if it doesn't exist
-            grouped[symbol] = {'shares': 0, 'price': 0, 'count': 0}
+    cashTotal = userCash + total
 
-        # Update the values for the symbol
-        grouped[symbol]['shares'] += shares
-        grouped[symbol]['price'] += price
-        grouped[symbol]['count'] += 1
-
-    # Create the new list with merged transactions
-    mergedTransactions = []
-    for symbol, data in grouped.items():
-        # Calculate average price
-        avg_price = data['price'] / data['count']
-        mergedTransactions.append({
-            'symbol': symbol,
-            'shares': data['shares'],
-            'price': usd(avg_price),  # Format price to 5 decimal places
-            'total_price': usd(data['shares'] * avg_price)
-        })
-
-    cashTotal = userCash + totalTransactions
-
-    print(f"\n mergedTransactions: {mergedTransactions} \n")
-
-    return render_template("index.html", transactions=mergedTransactions, cash=usd(userCash), cashTotal=usd(cashTotal) )
+    return render_template("index.html",
+                           cash=userCash, stocks=stocks, total=total, cashTotal=cashTotal, usd=usd
+                           )
 
 
 @app.route("/buy", methods=["GET", "POST"])
@@ -85,39 +65,32 @@ def index():
 def buy():
     """Buy shares of stock"""
     if request.method == "POST":
-        requestedSymbol = request.form.get("symbol")
-        requestedShares = request.form.get("shares")
+        symbol = request.form.get("symbol", "").upper()
+        shares = request.form.get("shares", "")
 
-        # Ensure symbol was introduced by user
-        if not requestedSymbol:
-            return apology("symbol not provided", 403)
+        # Validate input
+        if not symbol or not shares.isdigit() or int(shares) <= 0:
+            return apology("Invalid symbol or share quantity", 400)
 
-        # Ensure shares was introduced by user
-        if not requestedShares:
-            return apology("shares not not provided", 403)
+        shares = int(shares)
+        stock = lookup(symbol)
+        if not stock:
+            return apology("Stock not found", 400)
 
-        response = lookup(requestedSymbol)
+        # Check user funds
+        user = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]
+        total_cost = stock["price"] * shares
+        if user["cash"] < total_cost:
+            return apology("Insufficient funds", 403)
 
-        if not response:
-            return apology("symbol not found", 403)
+        # Update database
+        db.execute("UPDATE users SET cash = cash - ? WHERE id = ?", total_cost, session["user_id"])
+        db.execute("""
+            INSERT INTO purchases (userid, symbol, shares, price, purchase_datetime, name, type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, session["user_id"], symbol, shares, stock["price"], datetime.now(), stock["name"], "buy")
 
-        # Check user cash and requested total
-        userCashList = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])
-        userCash = float(userCashList[0]["cash"])
-        requestedTotal = response["price"] * float(requestedShares)
-
-        if userCash < requestedTotal:
-            return apology("not enough cash", 403)
-
-        # Store the purchase(buy) transaction in the database
-        db.execute("INSERT INTO purchases (userid, symbol, shares, price) VALUES (?, ?, ?, ?)", session["user_id"], requestedSymbol, requestedShares, response["price"])
-
-        # Calculate user remaining cash after the purchase
-        remainingCash = userCash - requestedTotal
-
-        # Update the user remaining cash total
-        db.execute("UPDATE users SET cash = ? WHERE id = ?", remainingCash, session["user_id"])
-
+        flash(f"Bought {shares} shares of {symbol}")
         return redirect("/")
     else:
         return render_template("buy.html")
@@ -127,56 +100,34 @@ def buy():
 @login_required
 def history():
     """Show history of transactions"""
-    return apology("TODO")
+    transactions = db.execute("SELECT * FROM purchases WHERE userid = ?", session["user_id"])
+    return render_template("history.html", transactions=transactions, usd=usd)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Log user in"""
-
-    # Forget any user_id
     session.clear()
-
-    # User reached route via POST (as by submitting a form via POST)
     if request.method == "POST":
-        # Ensure username was submitted
-        if not request.form.get("username"):
-            return apology("must provide username", 403)
+        username = request.form.get("username")
+        password = request.form.get("password")
 
-        # Ensure password was submitted
-        elif not request.form.get("password"):
-            return apology("must provide password", 403)
+        if not username or not password:
+            return apology("Must provide username and password", 403)
 
-        # Query database for username
-        rows = db.execute(
-            "SELECT * FROM users WHERE username = ?", request.form.get("username")
-        )
+        user = db.execute("SELECT * FROM users WHERE username = ?", username)
+        if not user or not check_password_hash(user[0]["hash"], password):
+            return apology("Invalid username or password", 403)
 
-        # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(
-            rows[0]["hash"], request.form.get("password")
-        ):
-            return apology("invalid username and/or password", 403)
-
-        # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
-
-        # Redirect user to home page
+        session["user_id"] = user[0]["id"]
         return redirect("/")
-
-    # User reached route via GET (as by clicking a link or via redirect)
-    else:
-        return render_template("login.html")
+    return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
     """Log user out"""
-
-    # Forget any user_id
     session.clear()
-
-    # Redirect user to login form
     return redirect("/")
 
 
@@ -185,52 +136,37 @@ def logout():
 def quote():
     """Get stock quote."""
     if request.method == "POST":
-        # Ensure symbol was found
-        if not request.form.get("symbol"):
-            return apology("symbol not found", 403)
+        symbol = request.form.get("symbol", "").upper()
+        if not symbol:
+            return apology("Missing symbol", 400)
 
-        # Get the name, price and symbol and use them in quoted template
-        if request.form.get("symbol"):
-            symbol_response = lookup(request.form.get("symbol"))
-            symbol_name = symbol_response['name']
-            symbol_price = symbol_response['price']
-            symbol = symbol_response['symbol']
-            return render_template("quoted.html", name=symbol_name, price=symbol_price, symbol=symbol)
-    else:
-        return render_template("quote.html")
+        stock = lookup(symbol)
+        if not stock:
+            return apology("Stock not found", 400)
+
+        return render_template("quoted.html", name=stock["name"], price=usd(stock["price"]), symbol=stock["symbol"])
+    return render_template("quote.html")
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """Register user"""
     if request.method == "POST":
-         # Ensure username was submitted
-        if not request.form.get("username"):
-            return apology("must provide username", 403)
+        username = request.form.get("username")
+        password = request.form.get("password")
+        confirmation = request.form.get("confirmation")
 
-        # Ensure password was submitted
-        elif not request.form.get("password"):
-            return apology("must provide password", 403)
+        if not username or not password:
+            return apology("Username and password are required", 400)
+        if password != confirmation:
+            return apology("Passwords must match", 400)
+        if db.execute("SELECT * FROM users WHERE username = ?", username):
+            return apology("Username already exists", 400)
 
-        # Query database for username
-        rows = db.execute(
-            "SELECT * FROM users WHERE username = ?", request.form.get("username")
-        )
-
-        # Ensure username exists and password is correct
-        if len(rows) > 0:
-            return apology("username already exists", 403)
-
-        # Check if password was retyped correctly
-        if request.form.get("password") != request.form.get("passwordConfirm"):
-            return apology("passwords don't match")
-
-        hashedPassword = generate_password_hash(request.form.get("password"))
-        db.execute("SERT INTO users (username, hash) VALUES (?, ?)", request.form.get("username"), hashedPassword)
-
+        hashed_password = generate_password_hash(password)
+        db.execute("INSERT INTO users (username, hash) VALUES (?, ?)", username, hashed_password)
         return redirect("/login")
-    else:
-        return render_template("register.html")
-
+    return render_template("register.html")
 
 
 @app.route("/sell", methods=["GET", "POST"])
@@ -238,15 +174,38 @@ def register():
 def sell():
     """Sell shares of stock"""
     if request.method == "POST":
+        symbol = request.form.get("symbol", "").upper()
+        shares = request.form.get("shares", "")
+
+        if not symbol or not shares.isdigit() or int(shares) <= 0:
+            return apology("Invalid input", 400)
+
+        shares = int(shares)
+        stock = lookup(symbol)
+        if not stock:
+            return apology("Stock not found", 400)
+
+        # Check user's stock holdings
+        holding = db.execute("""
+            SELECT SUM(shares) AS totalShares FROM purchases
+            WHERE userid = ? AND symbol = ?
+        """, session["user_id"], symbol)
+        if holding[0]["totalShares"] < shares:
+            return apology("Not enough shares", 400)
+
+        # Update database
+        total_sale = stock["price"] * shares
+        db.execute("UPDATE users SET cash = cash + ? WHERE id = ?", total_sale, session["user_id"])
+        db.execute("""
+            INSERT INTO purchases (userid, symbol, shares, price, purchase_datetime, name, type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, session["user_id"], symbol, -shares, stock["price"], datetime.now(), stock["name"], "sell")
+
+        flash(f"Sold {shares} shares of {symbol}")
         return redirect("/")
     else:
-        purchases = db.execute("SELECT DISTINCT * FROM purchases WHERE userid = ?", session["user_id"])
-        symbols = []
-
-        for purchase in purchases:
-            symbols.append(purchase["symbol"])
-        print(f"\n purchases: {purchases} \n")
-        print(f"\n symbols: {symbols} \n")
-
+        symbols = db.execute("""
+            SELECT symbol FROM purchases
+            WHERE userid = ? GROUP BY symbol HAVING SUM(shares) > 0
+        """, session["user_id"])
         return render_template("sell.html", symbols=symbols)
-

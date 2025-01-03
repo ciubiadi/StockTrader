@@ -15,23 +15,23 @@
             </tr>
         </thead>
         <tbody>
-            {% for transaction in transactions %}
-                <tr>
-                    <td class="text-start">{{ transaction.symbol }}</td>
-                    <td class="text-end">{{ transaction.shares }}</td>
-                    <td class="text-end">{{ transaction.price }}</td>
-                    <td class="text-end">{{ transaction.total_price }}</td>
-                </tr>
+            {% for stock in stocks %}
+                    <tr>
+                        <td class="text-start">{{ stock["symbol"] }}</td>
+                        <td class="text-end">{{ stock["totalShares"] }}</td>
+                        <td class="text-end">{{ usd(stock["price"]) }}</td>
+                        <td class="text-end">{{ usd(stock["totalShares"] * stock["price"]) }}</td>
+                    </tr>
             {% endfor %}
         </tbody>
         <tfoot>
             <tr>
                 <td class="text-end fw-bold" colspan="3">Cash</td>
-                <td class="text-end">{{ cash }}</td>
+                <td class="text-end">{{ usd(cash) }}</td>
             </tr>
             <tr>
                 <td class="text-end fw-bold" colspan="3">TOTAL</td>
-                <td class="text-end">{{ cashTotal }}</td>
+                <td class="text-end">{{ usd(total) }}</td>
             </tr>
         </tfoot>
     </table>
