@@ -94,4 +94,4 @@ This project is licensed under the MIT License. See the LICENSE file for details
 * Harvard University: Thanks for providing the foundation for this project.
 
 ### Author
-Developed by Adrian Albert. Feel free to reach out for questions or feedback.
+Developed by Adrian Albert Ciubucciu. Feel free to reach out for questions or feedback.
